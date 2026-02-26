@@ -51,6 +51,10 @@ open twilio-cost-simulator.html
 npx serve .
 ```
 
+## Notifications
+
+Push events on this repo trigger Slack notifications via GitHub Actions.
+
 ## License
 
 MIT
