@@ -3,6 +3,14 @@ name: Slack Notify
 on:
   push:
     branches: ['**']
+  pull_request:
+    types: [opened, closed, merged]
+  issues:
+    types: [opened, closed]
+  issue_comment:
+    types: [created]
+  watch:
+    types: [started]
   workflow_dispatch:
     inputs:
       message:
@@ -19,18 +27,111 @@ jobs:
       - name: Build message
         id: msg
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            MSG="${{ github.event.inputs.message }}"
-          else
-            MSG=$(git log -1 --pretty=format:'%s')
-          fi
-          echo "text=$MSG" >> "$GITHUB_OUTPUT"
+          EMOJI=""
+          COLOR=""
+          case "${{ github.event_name }}" in
+            push)
+              EMOJI="📝"
+              MSG="${{ github.event.head_commit.message }}"
+              BRANCH="${{ github.ref_name }}"
+              AUTHOR="${{ github.actor }}"
+              COMMIT="${{ github.sha }}"
+              SHORT_COMMIT="${COMMIT::7}"
+              TEXT="$EMOJI *Push to \`${BRANCH}\`*\n> $MSG\n• Author: $AUTHOR • Commit: \`$SHORT_COMMIT\`"
+              ;;
+            pull_request)
+              ACTION="${{ github.event.action }}"
+              PR_NUM="${{ github.event.pull_request.number }}"
+              PR_TITLE="${{ github.event.pull_request.title }}"
+              AUTHOR="${{ github.actor }}"
+              case "$ACTION" in
+                opened)
+                  EMOJI="🔀"
+                  COLOR="#36a64f"
+                  ;;
+                closed)
+                  EMOJI="🔒"
+                  COLOR="#ff0000"
+                  ;;
+                merged)
+                  EMOJI="✅"
+                  COLOR="#6600cc"
+                  ;;
+              esac
+              TEXT="$EMOJI *PR #$PR_NUM $ACTION*\n> $PR_TITLE\n• Author: $AUTHOR"
+              ;;
+            issues)
+              ACTION="${{ github.event.action }}"
+              ISSUE_NUM="${{ github.event.issue.number }}"
+              ISSUE_TITLE="${{ github.event.issue.title }}"
+              AUTHOR="${{ github.actor }}"
+              case "$ACTION" in
+                opened)
+                  EMOJI="🐛"
+                  COLOR="#ffcc00"
+                  ;;
+                closed)
+                  EMOJI="✅"
+                  COLOR="#36a64f"
+                  ;;
+              esac
+              TEXT="$EMOJI *Issue #$ISSUE_NUM $ACTION*\n> $ISSUE_TITLE\n• Author: $AUTHOR"
+              ;;
+            issue_comment)
+              ISSUE_NUM="${{ github.event.issue.number }}"
+              COMMENT_BODY="${{ github.event.comment.body }}"
+              AUTHOR="${{ github.actor }}"
+              EMOJI="💬"
+              TEXT="$EMOJI *New comment on Issue #$ISSUE_NUM*\n> $COMMENT_BODY\n• Author: $AUTHOR"
+              ;;
+            watch)
+              EMOJI="⭐"
+              TEXT="$EMOJI *${{ github.actor }} starred your repository!*"
+              ;;
+            workflow_dispatch)
+              EMOJI="🤖"
+              MSG="${{ github.event.inputs.message }}"
+              TEXT="$EMOJI $MSG"
+              ;;
+          esac
+
+          echo "text=$TEXT" >> "$GITHUB_OUTPUT"
+          echo "color=$COLOR" >> "$GITHUB_OUTPUT"
 
       - name: Send to Slack
         run: |
           PAYLOAD=$(jq -n \
-            --arg text "[${{ github.repository }}] ${{ steps.msg.outputs.text }}" \
-            '{text: $text}')
+            --arg text "${{ steps.msg.outputs.text }}" \
+            --arg repo "${{ github.repository }}" \
+            --arg url "${{ github.server_url }}/${{ github.repository }}" \
+            '{
+              attachments: [{
+                color: "36a64f",
+                blocks: [
+                  {
+                    type: "section",
+                    text: {
+                      type: "mrkdwn",
+                      text: $text
+                    }
+                  },
+                  {
+                    type: "actions",
+                    elements: [
+                      {
+                        type: "button",
+                        text: {
+                          type: "plain_text",
+                          text: "View Repository"
+                        },
+                        url: $url,
+                        style: "primary"
+                      }
+                    ]
+                  }
+                ]
+              }]
+            }')
           curl -sf -X POST -H 'Content-type: application/json' \
             --data "$PAYLOAD" \
             "${{ secrets.SLACK_WEBHOOK_URL }}"
